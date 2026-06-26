@@ -1,0 +1,303 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp") version "1.9.23-1.0.20" // versão compatível com seu Kotlin
+}
+
+android {
+    // ... configurações padrão
+}
+
+dependencies {
+    // Room
+    val roomVersion = "2.6.1"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion") // extensões de coroutines
+    ksp("androidx.room:room-compiler:$roomVersion") // processador de anotações via KSP
+
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // Lifecycle (ViewModel, LiveData)
+    val lifecycleVersion = "2.7.0"
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-livedata-ktx:$lifecycleVersion")
+
+    // Opcional: Compose (se desejar)
+    // implementation("androidx.compose.ui:ui:...")
+}
+[10:07, 25/06/2026] Matheus Gonçalves: import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "clients")
+data class Client(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val name: String,
+    val email: String,
+    val phone: String
+)
+[10:07, 25/06/2026] Matheus Gonçalves: import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "products")
+data class Product(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val name: String,
+    val description: String,
+    val price: Double
+)
+[10:07, 25/06/2026] Matheus Gonçalves: import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+@Entity(
+    tableName = "orders",
+    foreignKeys = [
+        ForeignKey(
+            entity = Client::class,
+            parentColumns = ["id"],
+            childColumns = ["clientId"],
+            onDelete = ForeignKey.CASCADE // ao deletar cliente, deleta pedidos
+        )
+    ],
+    indices = [Index("clientId")] // índice para otimizar consultas por cliente
+)
+data class Order(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val clientId: Long,
+    val date: Long, // timestamp em milissegundos
+    val status: String // "PENDING", "COMPLETED", etc.
+)
+[10:07, 25/06/2026] Matheus Gonçalves: import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+
+@Entity(
+    tableName = "order_products",
+    primaryKeys = ["orderId", "productId"], // chave composta
+    foreignKeys = [
+        ForeignKey(
+            entity = Order::class,
+            parentColumns = ["id"],
+            childColumns = ["orderId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = Product::class,
+            parentColumns = ["id"],
+            childColumns = ["productId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("productId")] // apenas o segundo campo necessita índice extra
+)
+data class OrderProduct(
+    val orderId: Long,
+    val productId: Long,
+    val quantity: Int
+)
+[10:07, 25/06/2026] Matheus Gonçalves: data class OrderWithProducts(
+    @Embedded val order: Order,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "orderId",
+        associateBy = Junction(
+            value = OrderProduct::class,
+            parentColumn = "orderId",
+            entityColumn = "productId"
+        )
+    )
+    val products: List<ProductWithQuantity>
+)
+
+data class ProductWithQuantity(
+    @Embedded val product: Product,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "productId",
+        associateBy = Junction(
+            value = OrderProduct::class,
+            parentColumn = "productId",
+            entityColumn = "orderId"
+        )
+    )
+    val quantity: Int // obtido da tabela OrderProduct
+)
+[10:08, 25/06/2026] Matheus Gonçalves: data class ClientWithOrders(
+    @Embedded val client: Client,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "clientId"
+    )
+    val orders: List<Order>
+)
+[10:08, 25/06/2026] Matheus Gonçalves: import androidx.room.*
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface ClientDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertClient(client: Client): Long
+
+    @Update
+    suspend fun updateClient(client: Client)
+
+    @Delete
+    suspend fun deleteClient(client: Client)
+
+    @Query("SELECT * FROM clients ORDER BY name ASC")
+    fun getAllClients(): Flow<List<Client>>
+
+    @Transaction
+    @Query("SELECT * FROM clients WHERE id = :clientId")
+    fun getClientWithOrders(clientId: Long): Flow<ClientWithOrders?>
+}
+[10:08, 25/06/2026] Matheus Gonçalves: @Dao
+interface ProductDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProduct(product: Product): Long
+
+    @Update
+    suspend fun updateProduct(product: Product)
+
+    @Delete
+    suspend fun deleteProduct(product: Product)
+
+    @Query("SELECT * FROM products ORDER BY name ASC")
+    fun getAllProducts(): Flow<List<Product>>
+}
+[10:08, 25/06/2026] Matheus Gonçalves: @Dao
+interface OrderDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrder(order: Order): Long
+
+    @Update
+    suspend fun updateOrder(order: Order)
+
+    @Delete
+    suspend fun deleteOrder(order: Order)
+
+    @Query("SELECT * FROM orders ORDER BY date DESC")
+    fun getAllOrders(): Flow<List<Order>>
+
+    @Transaction
+    @Query("SELECT * FROM orders WHERE id = :orderId")
+    fun getOrderWithProducts(orderId: Long): Flow<OrderWithProducts?>
+
+    // Inserção de produtos em um pedido (tabela de junção)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrderProduct(orderProduct: OrderProduct)
+
+    // Consulta customizada para obter produtos com quantidade
+    @Query("""
+        SELECT p.*, op.quantity 
+  …
+[10:08, 25/06/2026] Matheus Gonçalves: data class ProductWithQuantity(
+    @Embedded val product: Product,
+    val quantity: Int
+)
+[10:08, 25/06/2026] Matheus Gonçalves: data class OrderWithProducts(
+    @Embedded val order: Order,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "orderId"
+    )
+    val products: List<ProductWithQuantity>
+)
+[10:08, 25/06/2026] Matheus Gonçalves: data class OrderDetails(
+    val order: Order,
+    val products: List<ProductWithQuantity>
+)
+[10:08, 25/06/2026] Matheus Gonçalves: @Transaction
+@Query("SELECT * FROM orders WHERE id = :orderId")
+suspend fun getOrderDetails(orderId: Long): OrderDetails? {
+    val order = // busca order
+    val products = getProductsWithQuantityByOrder(orderId).first() // não reativo, para uso em ViewModel
+    return order?.let { OrderDetails(it, products) }
+}
+[10:08, 25/06/2026] Matheus Gonçalves: import androidx.room.Database
+import androidx.room.RoomDatabase
+
+@Database(
+    entities = [Client::class, Product::class, Order::class, OrderProduct::class],
+    version = 1,
+    exportSchema = false
+)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun clientDao(): ClientDao
+    abstract fun productDao(): ProductDao
+    abstract fun orderDao(): OrderDao
+}
+class ShopRepository(private val db: AppDatabase) {
+    private val clientDao = db.clientDao()
+    private val productDao = db.productDao()
+    private val orderDao = db.orderDao()
+
+    // Clientes
+    fun getAllClients(): Flow<List<Client>> = clientDao.getAllClients()
+    suspend fun insertClient(client: Client) = clientDao.insertClient(client)
+    suspend fun updateClient(client: Client) = clientDao.updateClient(client)
+    suspend fun deleteClient(client: Client) = clientDao.deleteClient(client)
+
+    // Produtos
+    fun getAllProducts(): Flow<List<Product>> = productDao.getAllProducts()
+    suspend fun insertProduct(product: Product) = productDao.insertProduct(product)
+    suspend fun updateProduct(product: Product) = productDao.updateProduct(product)
+    suspend fun deleteProduct(product: Product) = productDao.deleteProduct(product)
+
+    // Pedidos
+    fun getAllOrders(): Flow<List<Order>> = orderDao.getAllOrders()
+    suspend fun createOrder(order: Order, items: List<Pair<Product, Int>>): Long {
+        val orderId = orderDao.insertOrder(order)
+        items.forEach { (product, quantity) ->
+            orderDao.insertOrderProduct(OrderProduct(orderId, product.id, quantity))
+        }
+        return orderId
+    }
+
+    fun getOrderWithProducts(orderId: Long): Flow<OrderWithProducts?> =
+        orderDao.getOrderWithProducts(orderId)
+
+    // Obter produtos com quantidades para um pedido específico (reativo)
+    fun getProductsWithQuantityByOrder(orderId: Long): Flow<List<ProductWithQuantity>> =
+        orderDao.getProductsWithQuantityByOrder(orderId)
+}
+class ShopViewModel(private val repository: ShopRepository) : ViewModel() {
+    val allClients: LiveData<List<Client>> = repository.getAllClients().asLiveData()
+    val allProducts: LiveData<List<Product>> = repository.getAllProducts().asLiveData()
+    val allOrders: LiveData<List<Order>> = repository.getAllOrders().asLiveData()
+
+    fun addClient(name: String, email: String, phone: String) {
+        viewModelScope.launch {
+            repository.insertClient(Client(name = name, email = email, phone = phone))
+        }
+    }
+
+    fun placeOrder(clientId: Long, items: List<Pair<Product, Int>>) {
+        viewModelScope.launch {
+            val order = Order(
+                clientId = clientId,
+                date = System.currentTimeMillis(),
+                status = "PENDING"
+            )
+            repository.createOrder(order, items)
+        }
+    }
+}
+class MyApp : Application() {
+    lateinit var database: AppDatabase
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        database = Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java,
+            "shop_database"
+        ).build()
+    }
+}
